@@ -1,4 +1,4 @@
-type 'a vec_state =
+type 'a vec =
   {
     mutable arr: 'a option array ;
     mutable size: int     ;
@@ -6,9 +6,9 @@ type 'a vec_state =
   }
 ;;
 
-let empty (n: int) (default: 'a) = { arr = Array.make n (Some default); size = n; index = 0; }
+let empty () = { arr = Array.make 0 None; size = 0; index = 0; }
 
-let expand_check (vs: 'a vec_state) =
+let expand_check (vs: 'a vec) =
   match vs.size, vs.index with
   | 0, 0 ->
     vs.arr <- Array.make 16 None;
@@ -24,10 +24,15 @@ let expand_check (vs: 'a vec_state) =
     else
       ()
 
-let append (it: 'a) (vs: 'a vec_state) =
+let append (it: 'a) (vs: 'a vec) =
   expand_check vs;
   Array.set vs.arr vs.index (Some it);
   vs.index <- vs.index + 1;
   ()
 
-let get (i: int) (vs: 'a vec_state) = Array.get vs.arr i
+let get (i: int) (vs: 'a vec) =
+  match Array.get vs.arr i with
+  | Some x -> x
+  | None -> raise (Invalid_argument "index out of bounds")
+
+let length (vs: 'a vec) = vs.index
