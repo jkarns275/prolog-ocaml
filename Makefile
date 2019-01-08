@@ -1,10 +1,9 @@
+OCB_FLAGS = -use-ocamlfind -use-menhir -I src -I lib
+OCB = ocamlbuild $(OCB_FLAGS)
+
 clean:
-	rm -rf ./*.native ./*.out ./*.cmo ./*.cmi
+	$(OCB) -clean
 build:
-	make clean
-	ocamlc vec.ml
-	ocamlc vec.cmo interner.ml
-	ocamlc vec.cmo interner.cmo prolog.ml -o prolog.native
-run:
-	make build
+	$(OCB) prolog.native
+run: 	build
 	./prolog.native
