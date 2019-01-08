@@ -1,5 +1,7 @@
 open Interner
 
+open Preast
+
 let rec comma_separate strings =
   match strings with
   | [] -> ""
@@ -13,7 +15,7 @@ module Term =
     let _varno_counter = { n = 0; }
 
     type var_t = { mutable instance: t option;  }
-    and tail_t = { mutable tail: term_list option; }
+    and tail_t = { mutable tail: term_list option; name: IString.t; }
     and term_list =
       | TList of t * term_list
       | Tail of tail_t
@@ -54,13 +56,13 @@ module Term =
       let (name, varno, vt) = make_var_internal name inst in
       name, Var (varno, vt)
 
-    let make_tail (tail: term_list option) = { tail; }
+    let make_tail (name: IString.t) (tail: term_list option) = { name; tail; }
 
     let rec copy_term_list tl =
       match tl with
       | TList (term, tail) -> TList (copy term, copy_term_list tail)
       | Nil -> Nil
-      | Tail tt -> Tail (make_tail tt.tail)
+      | Tail tt -> Tail (make_tail tt.name tt.tail)
     and copy_var name varno vt =
       match vt.instance with
         | Some i -> make_var_internal name (Some (copy i))
@@ -89,7 +91,7 @@ module Term =
         | Nil -> Printf.sprintf "%s" (string_of_term term)
         | Tail t -> (
           match t.tail with
-          | None -> Printf.sprintf "%s | Tail" (string_of_term term)
+          | None -> Printf.sprintf "%s | %s" (string_of_term term) (Interner.get_string t.name)
           | Some tail -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term_list_inner tail)
         )
         | TList _ -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term_list_inner tail)
@@ -248,15 +250,10 @@ module Goal =
 module Rule =
   struct
 
-    type body = Goal of Goal.t * body | Nil
+    type body = Goal.t list
     type t = Goal.t * body
 
-    let rec map_body f body =
-      match body with
-      | Nil -> []
-      | Goal (g, b) -> (f g) :: map_body f b
-
-    let string_of_body body = comma_separate (map_body Goal.to_string body)
+    let string_of_body body = comma_separate (List.map Goal.to_string body)
 
     let rec string_of_rule ((goal, body): t) =
       let goal_string = Goal.to_string goal in
@@ -265,8 +262,44 @@ module Rule =
 
     let rec append_to_body (lhs: body) (rhs: body) =
       match lhs with
-      | Goal (goal, body) -> Goal(goal, append_to_body body rhs)
-      | Nil -> rhs
+      | goal :: tail -> goal :: append_to_body tail rhs
+      | [] -> rhs
+
+  end
+
+module Ast =
+  struct
+
+  module IStringMap = Map.Make (IString)
+
+  type var_cache_t = { mutable s2v: Term.t IStringMap.t; }
+  let var_cache = { s2v = IStringMap.empty }
+
+  type t = Rule.t list
+
+  let term_from_preast (t: Preast.term): Term.t =
+    match t with
+    | Atom' str -> Interner.intern str, Atom
+    | Var' str ->
+      let name = Interner.intern str in
+      match IStringMap.find_opt name var_cache.s2v with
+      | Some v -> v
+      | None ->
+        let var = Term.make_var name None in
+        var_cache.s2v <- IStringMap.add name var var_cache.s2v;
+        var
+
+
+  let goal_from_preast ((name, args): Preast.goal): Goal.t =
+    { name = Interner.intern name; args = List.map term_from_preast args; }
+
+  let rule_from_preast ((cl, goals): Preast.rule) =
+    var_cache.s2v <- IStringMap.empty;
+    let clause = goal_from_preast cl in
+    let goals = List.map goal_from_preast goals in
+    clause, goals
+
+  let from_preast (p: Preast.t) = List.map rule_from_preast p
 
   end
 
@@ -325,20 +358,20 @@ module Solver =
       let t = Term.trail#mark in
       let clause_state = strip_clause_state cl in
       let res = match goals with
-      | Nil -> false
-      | Goal (g, goals_trail) ->
+      | [] -> false
+      | g :: goals_trail ->
         if Goal.unify cl g then
           let unified_rules =
             match rule_goals with
-            | Nil -> goals_trail
-            | Goal (g, tail) -> Rule.append_to_body goals_trail rule_goals
+            | [] -> goals_trail
+            | g :: tail -> Rule.append_to_body goals_trail rule_goals
           in
           match unified_rules with
-          | Nil ->
+          | [] ->
             solver_state.found_match <- true;
             print_soln ();
             true
-          | Goal (g, tail) -> solve_inner unified_rules
+          | g :: tail -> solve_inner unified_rules
         else
           false
       in
@@ -348,8 +381,8 @@ module Solver =
 
     and solve_inner (goals: Rule.body) =
       match goals with
-      | Nil -> true
-      | Goal (head, tail) ->
+      | [] -> true
+      | head :: tail ->
         match IStringMap. find_opt head.name solver_state.program with
         | None -> false
         | Some rules ->
@@ -358,7 +391,7 @@ module Solver =
 
     let solve (g: Goal.t) =
       solver_state.query <- g;
-      solve_inner (Goal(g, Nil))
+      solve_inner [g]
 
     let add_rule (name: IString.t) (rules: Rule.t list) = solver_state.program <- IStringMap. (add name rules solver_state.program)
   end
@@ -368,24 +401,25 @@ let var_x = Interner.intern "@x"
 let var_y = Interner.intern "@y"
 let var_z = Interner.intern "@z"
 let my_list = Interner.intern "mylist"
+let mt = Interner.intern "tail"
 let rule_name = Interner.intern "test"
 let r: Rule.t =
   {
     name = rule_name;
-    args = [Term.make_list_with_tail my_list [Term.make_var (Interner.intern "@boo") None; Term.make_atom ":cug"] { tail = None }]
-  }, Nil
+    args = [Term.make_list_with_tail my_list [Term.make_var (Interner.intern "@boo") None; Term.make_atom ":cug"] { tail = None; name = mt; }]
+  }, []
 ;;
 let r2: Rule.t =
   {
     name = rule_name;
-    args = [Term.make_list_with_tail my_list [Term.make_atom ":wew"; Term.make_atom ":jeffe"] { tail = None }]
-  }, Nil
+    args = [Term.make_list_with_tail my_list [Term.make_atom ":wew"; Term.make_atom ":jeffe"] { tail = None; name = mt }]
+  }, []
 ;;
 Solver.add_rule rule_name [r; r2];;
 let q: Goal.t =
   {
     name = rule_name;
-    args = [Term.make_list_with_tail my_list [Term.make_var var_z None] { tail = None }];
+    args = [0, List (Term.make_list [Term.make_var var_z None; Term.make_var var_x None])];
   } ;;
 Printf.printf "\nQuery: %s\nSolutions:\n" (Goal.to_string q);;
 Solver.solve q
