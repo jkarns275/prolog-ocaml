@@ -5,6 +5,6 @@ This repository is a small and incomplete implementation of a prolog interpreter
 ## TODO
 - [x] Basic interpreter (i.e. 1st order logic)
 - [ ] Parser
-- [ ] Lists
+- [x] Lists
 - [ ] Arithmetic
 - [ ] Optimizations
