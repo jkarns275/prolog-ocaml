@@ -1,41 +1,104 @@
 open Interner
 
-type _varno_counter_t = { mutable n: int; }
-let _varno_counter = { n = 0; }
+let rec comma_separate strings =
+  match strings with
+  | [] -> ""
+  | head :: [] -> head
+  | head :: tail -> Printf.sprintf "%s, %s" head (comma_separate tail)
 
 module Term =
   struct
-    type var_t = { mutable instance: t option  }
+
+    type _varno_counter_t = { mutable n: int; }
+    let _varno_counter = { n = 0; }
+
+    type var_t = { mutable instance: t option;  }
+    and tail_t = { mutable tail: term_list option; }
+    and term_list =
+      | TList of t * term_list
+      | Tail of tail_t
+      | Nil
     and kind =
       | Var of int * var_t
+      | List of term_list
       | Atom
     and t = IString.t * kind
 
+    let rec map_term_list f tl =
+      match tl with
+      | TList (term, tail) -> (f term) :: map_term_list f tail
+      | Nil -> []
+      | Tail t ->
+        match t.tail with
+        | Some tail -> map_term_list f tail
+        | None -> []
+
     let make_atom (is: string) = (Interner.intern is), Atom
 
-    let make_var name inst =
+    let rec make_list (terms: t list) =
+      match terms with
+      | [] -> Nil
+      | term :: tail -> TList (term, make_list tail)
+    let rec make_list_with_tail_inner (terms: t list) (tail: tail_t) =
+      match terms with
+      | [] -> Tail tail
+      | term :: t -> TList (term, make_list_with_tail_inner t tail)
+    and make_list_with_tail (name: IString.t) (terms: t list) (tail: tail_t) =
+      name, List (make_list_with_tail_inner terms tail)
+
+    let rec make_var_internal name inst =
       let varno = _varno_counter.n in
       _varno_counter.n <- varno + 1;
-      name, Var (varno, { instance = inst; })
+      name, varno, { instance = inst; }
+    and make_var name inst =
+      let (name, varno, vt) = make_var_internal name inst in
+      name, Var (varno, vt)
 
-    let rec copy ((name, kind): t) =
+    let make_tail (tail: term_list option) = { tail; }
+
+    let rec copy_term_list tl =
+      match tl with
+      | TList (term, tail) -> TList (copy term, copy_term_list tail)
+      | Nil -> Nil
+      | Tail tt -> Tail (make_tail tt.tail)
+    and copy_var name varno vt =
+      match vt.instance with
+        | Some i -> make_var_internal name (Some (copy i))
+        | None -> make_var_internal name None
+    and copy ((name, kind): t) =
       match kind with
-      | Var (varno, vt) -> (
-        match vt.instance with
-        | Some i -> make_var name (Some (copy i))
-        | None -> make_var name None
-      )
+      | Var (varno, vt) ->
+        let (name, varno, vt) = copy_var name varno vt in
+        name, Var (varno, vt)
       | Atom -> name, kind
+      | List l -> name, List (copy_term_list l)
 
-    let reset ((name, kind): t) =
+    let rec reset ((name, kind): t) =
       match kind with
       | Var (varno, inst) ->
         inst.instance <- None;
         ()
+      | List l -> ignore (map_term_list (fun term -> reset term) l)
       | Atom -> ()
 
-    let rec string_of_term ((name, kind): t) =
+    let rec string_of_term_list (tl: term_list) = Printf.sprintf "[%s]" (string_of_term_list_inner tl)
+    and string_of_term_list_inner (tl: term_list) =
+      match tl with
+      | TList (term, tail) -> (
+        match tail with
+        | Nil -> Printf.sprintf "%s" (string_of_term term)
+        | Tail t -> (
+          match t.tail with
+          | None -> Printf.sprintf "%s | Tail" (string_of_term term)
+          | Some tail -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term_list_inner tail)
+        )
+        | TList _ -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term_list_inner tail)
+      )
+      | Nil -> ""
+      | Tail t -> "" (* This is uncreachable *)
+    and string_of_term ((name, kind): t) =
       match kind with
+      | List l -> string_of_term_list l
       | Atom -> Interner.get_string name
       | Var (varno, inst) ->
         match inst.instance with
@@ -66,12 +129,63 @@ module Term =
             | _ -> () (* This will never happen *)
       end
 
+    let rec unify_lists (l0: term_list) (l1: term_list) =
+      match l0, l1 with
+      | TList (t0, tail0), TList (t1, tail1) ->
+        if unify t0 t1 then unify_lists tail0 tail1 else false
+      | Nil, Tail t -> unify_lists l1 l0
+      | Tail t, Nil -> (
+        match t.tail with
+        | Some tail -> false
+        | None -> true
+      )
+      | TList (t0, tail), Tail t1 -> unify_lists l1 l0
+      | Tail t0, TList (t1, tail) -> (
+        match t0.tail with
+        | Some t -> unify_lists t tail
+        | None ->
+          t0.tail <- Some l1;
+          trail#push (0, List l0);
+          true
+      )
+      | Tail t0, Tail t1 -> (
+        match t0.tail, t1.tail with
+        | Some tail0, Some tail1 -> unify_lists tail0 tail1
+        | Some tail0, None ->
+          t1.tail <- Some tail0;
+          trail#push (0, List l1);
+          true
+        | None, Some tail1 ->
+          t0.tail <- Some tail1;
+          trail#push (0, List l0);
+          true
+        | None, None ->
+          t0.tail <- Some l1;
+          trail#push (0, List l0);
+          true
+      )
+      | TList _, Nil -> false
+      | Nil, TList _ -> false
+      | Nil, Nil -> true
 
-    let rec unify (t0: t) (t1: t) =
+    and unify (t0: t) (t1: t) =
       let n0, k0 = t0 in
       let n1, k1 = t1 in
       match k0, k1 with
+      | List l0, List l1 -> unify_lists l0 l1
+      | List l0, Atom -> false
+      | Atom, List l1 -> false
+      | List l, Var (varno, vt) -> unify t1 t0
+      | Var (varno, vt), List l -> (
+        match vt.instance with
+        | Some inst -> unify inst t1
+        | None ->
+          vt.instance <- Some t1;
+          trail#push t0;
+          true
+      )
       | Atom, Atom -> n0 = n1
+      | Atom, Var (varno, vt) -> unify t1 t0
       | Var (varno, vt), Atom -> (
         match vt.instance with
         | Some inst -> unify inst t1
@@ -96,15 +210,8 @@ module Term =
           trail#push t0;
           true
       )
-      | _ -> unify t1 t0
 
   end
-
-let rec comma_separate strings =
-  match strings with
-  | [] -> ""
-  | head :: [] -> head
-  | head :: tail -> Printf.sprintf "%s, %s" head (comma_separate tail)
 
 module Goal =
   struct
@@ -258,26 +365,28 @@ module Solver =
 
 
 let var_x = Interner.intern "@x"
+let var_y = Interner.intern "@y"
+let var_z = Interner.intern "@z"
+let my_list = Interner.intern "mylist"
 let rule_name = Interner.intern "test"
-let r: Rule.t = { name = rule_name; args = [Term.make_atom ":cug"] }, Nil;;
-let r2: Rule.t = { name = rule_name; args = [Term.make_atom ":jeffeee"] }, Nil;;
+let r: Rule.t =
+  {
+    name = rule_name;
+    args = [Term.make_list_with_tail my_list [Term.make_var (Interner.intern "@boo") None; Term.make_atom ":cug"] { tail = None }]
+  }, Nil
+;;
+let r2: Rule.t =
+  {
+    name = rule_name;
+    args = [Term.make_list_with_tail my_list [Term.make_atom ":wew"; Term.make_atom ":jeffe"] { tail = None }]
+  }, Nil
+;;
 Solver.add_rule rule_name [r; r2];;
-let q: Goal.t = { name = rule_name; args = [Term.make_var var_x None]; } ;;
+let q: Goal.t =
+  {
+    name = rule_name;
+    args = [Term.make_list_with_tail my_list [Term.make_var var_z None] { tail = None }];
+  } ;;
+Printf.printf "\nQuery: %s\nSolutions:\n" (Goal.to_string q);;
 Solver.solve q
 
-(* class query (query_goal: goal list) =
-  object (self)
-    val mutable found_match = false
-
-    method solve =
-      found_match <- false;
-      current_query.query <- self;
-      self#solve_inner 0
-
-    method solve_inner (level: int) =
-      match Program.find_opt query_goal#name program.p with
-      | Some rules -> true
-      | None -> false
-  end
-;;
-*)
