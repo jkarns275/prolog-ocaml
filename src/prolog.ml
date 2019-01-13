@@ -1,6 +1,7 @@
 open Interner
 open Hashtbl
 open Preast
+open Batteries
 
 let rec comma_separate strings =
   match strings with
@@ -15,7 +16,7 @@ module Term =
     let _varno_counter = { n = 0; }
 
     type var_t = { mutable instance: t option;  }
-    and tail_t = { mutable tail: term_list option; name: IString.t; }
+    and tail_t = { mutable tail: var_t; name: IString.t; }
     and term_list =
       | TList of t * term_list
       | Tail of tail_t
@@ -31,12 +32,15 @@ module Term =
       | TList (term, tail) -> (f term) :: map_term_list f tail
       | Nil -> []
       | Tail t ->
-        match t.tail with
-        | Some tail -> map_term_list f tail
+        match t.tail.instance with
+        | Some t -> [f t]
         | None -> []
 
     let make_atom (is: string) = (Interner.intern is), Atom
-
+    let next_varno =
+      let varno = _varno_counter.n in
+      _varno_counter.n <- varno + 1;
+     varno
     let rec make_list (terms: t list) =
       match terms with
       | [] -> Nil
@@ -49,28 +53,29 @@ module Term =
       name, List (make_list_with_tail_inner terms tail)
 
     let rec make_var_internal name inst =
-      let varno = _varno_counter.n in
-      _varno_counter.n <- varno + 1;
+      let varno = next_varno in
       name, varno, { instance = inst; }
     and make_var name inst =
       let (name, varno, vt) = make_var_internal name inst in
       name, Var (varno, vt)
 
-    let make_tail (name: IString.t) (tail: term_list option) = { name; tail; }
+    let make_tail (name: IString.t) (tail: var_t) = { name; tail; }
 
     let rec copy_term_list tl =
       match tl with
       | TList (term, tail) -> TList (copy term, copy_term_list tail)
       | Nil -> Nil
-      | Tail tt -> Tail (make_tail tt.name tt.tail)
+      | Tail tt -> (
+        let (_name, _varno, vt) = copy_var tt.name 0 tt.tail in
+        Tail { tail = vt; name = tt.name }
+      )
     and copy_var name varno vt =
-      match vt.instance with
-        | Some i -> make_var_internal name (Some (copy i))
-        | None -> make_var_internal name None
+      let inst = BatOption.map copy vt.instance in
+      make_var_internal name inst
     and copy ((name, kind): t) =
       match kind with
       | Var (varno, vt) ->
-        let (name, varno, vt) = copy_var name varno vt in
+        let (_name, _varno, vt) = copy_var name varno vt in
         name, Var (varno, vt)
       | Atom -> name, kind
       | List l -> name, List (copy_term_list l)
@@ -90,9 +95,9 @@ module Term =
         match tail with
         | Nil -> Printf.sprintf "%s" (string_of_term term)
         | Tail t -> (
-          match t.tail with
+          match t.tail.instance with
           | None -> Printf.sprintf "%s | %s" (string_of_term term) (Interner.get_string t.name)
-          | Some tail -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term_list_inner tail)
+          | Some tail -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term tail)
         )
         | TList _ -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term_list_inner tail)
       )
@@ -137,32 +142,32 @@ module Term =
         if unify t0 t1 then unify_lists tail0 tail1 else false
       | Nil, Tail t -> unify_lists l1 l0
       | Tail t, Nil -> (
-        match t.tail with
+        match t.tail.instance with
         | Some tail -> false
         | None -> true
       )
       | TList (t0, tail), Tail t1 -> unify_lists l1 l0
       | Tail t0, TList (t1, tail) -> (
-        match t0.tail with
-        | Some t -> unify_lists t tail
+        match t0.tail.instance with
+        | Some t -> unify t (0, List tail)
         | None ->
-          t0.tail <- Some l1;
+          t0.tail.instance <- Some (0, List l1);
           trail#push (0, List l0);
           true
       )
       | Tail t0, Tail t1 -> (
-        match t0.tail, t1.tail with
-        | Some tail0, Some tail1 -> unify_lists tail0 tail1
+        match t0.tail.instance, t1.tail.instance with
+        | Some tail0, Some tail1 -> unify tail0 tail1
         | Some tail0, None ->
-          t1.tail <- Some tail0;
+          t1.tail.instance <- Some tail0;
           trail#push (0, List l1);
           true
         | None, Some tail1 ->
-          t0.tail <- Some tail1;
+          t0.tail.instance <- Some tail1;
           trail#push (0, List l0);
           true
         | None, None ->
-          t0.tail <- Some l1;
+          t0.tail.instance <- Some (0, List l1);
           trail#push (0, List l0);
           true
       )
@@ -271,24 +276,34 @@ module IStringMap = Map.Make (IString)
 
 module Ast =
   struct
-
-  type var_cache_t = { mutable s2v: Term.t IStringMap.t; }
+  type var_cache_t = { mutable s2v: Term.var_t IStringMap.t; }
   let var_cache = { s2v = IStringMap.empty }
 
   type t = Rule.t list IStringMap.t
 
-  let term_from_preast (t: Preast.term): Term.t =
+  let get_var name =
+    try IStringMap.find name var_cache.s2v
+    with Not_found ->
+      let (_, _, vt) = Term.make_var_internal name None in
+      var_cache.s2v <- IStringMap.add name vt var_cache.s2v;
+      vt
+  let intern s = Interner.intern s
+  let rec term_list_from_preast (t: Preast.list_term list): Term.term_list =
     match t with
-    | Atom' str -> Interner.intern str, Atom
-    | Var' str ->
-      let name = Interner.intern str in
-      match IStringMap.find_opt name var_cache.s2v with
-      | Some v -> v
-      | None ->
-        let var = Term.make_var name None in
-        var_cache.s2v <- IStringMap.add name var var_cache.s2v;
-        var
-
+    | [] -> Nil
+    | (Tail' s) :: t -> Tail { tail = get_var (intern s); name = (intern s); }
+    | (Term' h) :: t -> TList (term_from_preast h, term_list_from_preast t)
+    | Nil' :: t -> Nil
+  and term_from_preast (t: Preast.term): Term.t =
+    match t with
+    | Atom' str -> intern str, Atom
+    | Var' str -> (
+      let varno = Term.next_varno in
+      intern str, Var (varno, get_var (intern str))
+    )
+    | List' l ->
+      let terms = term_list_from_preast l in
+      0, List terms
 
   let goal_from_preast ((name, args): Preast.goal) = Interner.intern name, List.map term_from_preast args
 
@@ -305,7 +320,8 @@ module Ast =
       Hashtbl.add tbl name r
     in
     ignore (List.map add_rule (List.map rule_from_preast p));
-    Seq.fold_left (fun acc k -> IStringMap.add k (Hashtbl.find_all tbl k) acc) IStringMap.empty (Hashtbl.to_seq_keys tbl)
+    List.fold_left (fun acc k -> IStringMap.add k (Hashtbl.find_all tbl k) acc) IStringMap.empty
+      (List.map (fun (k, v) -> k) (Hashtbl.to_list tbl))
 
   end
 
@@ -386,11 +402,12 @@ module Solver =
       match goals with
       | [] -> true
       | (name, args) :: tail ->
-        match IStringMap. find_opt name solver_state.program with
-        | None -> false
-        | Some rules ->
+        try (
+          let rules = IStringMap.find name solver_state.program in
           ignore (List.map (fun x -> try_unify_rule x goals) rules);
           true
+        )
+        with Not_found -> false
 
     let solve (g: Goal.t) =
       solver_state.query <- g;
@@ -427,17 +444,21 @@ let parse_with_error lexbuf =
 exception ParseException of string
 
 let p =
-  match parse_with_error (lex_buf_of_in_channel (in_channel_of_string "tests/simple.pl")) with
+  match parse_with_error (lex_buf_of_in_channel BatFile. (open_in "tests/simple.pl")) with
   | Some x -> Ast.from_preast x
   | None -> raise (ParseException "Failed to parse.")
 ;;
+
+open BatEnum
+let print_rules (rules: Rule.t list) = ignore (List.map rules (fun v -> Printf.printf "%s\n" (Rule.string_of_rule v)));;
+let keys = BatEnum.iter print_rules (IStringMap.values p);;
 
 Solver.solver_state.program <- p
 
 let q: Goal.t =
   (
     Interner.intern "zzyzz",
-    [0, List (Term.make_list [Term.make_var (Interner.intern "z") None; Term.make_var (Interner.intern "x") None])]
+    [0, List (Term.make_list [Term.make_var (Interner.intern "@z") None; Term.make_var (Interner.intern "@x") None])]
   ) ;;
 Printf.printf "\nQuery: %s\nSolutions:\n" (Goal.to_string q);;
 Solver.solve q

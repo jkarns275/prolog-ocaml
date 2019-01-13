@@ -3,6 +3,11 @@ open Interner
 type term =
   | Atom' of string
   | Var' of string
+  | List' of list_term list
+and list_term =
+  | Nil'
+  | Term' of term
+  | Tail' of string
 ;;
 
 type goal = string * term list
@@ -15,6 +20,7 @@ let string_of_term t =
   match t with
   | Atom' s -> s
   | Var' s -> s
+  | List' s -> "fill me in later"
 ;;
 
 let rec string_of_term_list ts =

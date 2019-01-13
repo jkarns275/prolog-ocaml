@@ -6,6 +6,9 @@
 %token LPAREN
 %token IMPLIES
 %token CUT
+%token LBRACE
+%token RBRACE
+%token PIPE
 %token EOR
 %token EOF
 %start <Preast.t option> prog
@@ -57,12 +60,21 @@ rev_clause_args:
     { [cl] }
 ;
 
-
-
 term:
   | name = VAR_NAME
     { Preast. (Var' name) }
   | atom = ATOM
     { Preast. (Atom' atom) }
-    
+  | l = term_list
+    { Preast. (List' l) }
 ;
+
+rev_list_contents:
+  | { [Preast. Nil'] }
+  | tail = rev_list_contents; COMMA; it = term
+    { (Preast. (Term' it)) :: tail }
+  | tail = rev_list_contents; PIPE; var = VAR_NAME
+    { (Preast. (Tail' var)) :: tail }
+  | it = term { [Preast. (Term' it)] }
+;
+term_list: LBRACE; items = rev_list_contents; RBRACE { List.rev items };

@@ -27,9 +27,12 @@ rule read =
   | atom { ATOM (Lexing.lexeme lexbuf) }
   | '(' { LPAREN }
   | ')' { RPAREN }
+  | '[' { LBRACE }
+  | ']' { RBRACE }
   | ":-" { IMPLIES }
   | '.' { EOR }
   | ',' { COMMA }
   | eof { EOF }
+  | '|' { PIPE }
   | '!' { CUT }
   | _ { raise (SyntaxError ("Unexpected char: " ^ Lexing.lexeme lexbuf)) }
