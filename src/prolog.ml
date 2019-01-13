@@ -418,8 +418,8 @@ module Solver =
 
 open Lexer
 open Lexing
-open Core
 open Preast
+let c = List.map (fun x -> Printf.printf "%d\n" x) [1;2;3;4];;
 
 let print_position outx lexbuf =
   let pos = lexbuf.lex_curr_p in
@@ -427,17 +427,15 @@ let print_position outx lexbuf =
     pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
 ;;
 
-let in_channel_of_string s = In_channel.create s
-
 let lex_buf_of_in_channel inch = Lexing.from_channel inch
 
 let parse_with_error lexbuf =
   try Parser.prog Lexer.read lexbuf with
   | SyntaxError msg ->
-    fprintf stderr "%a:  %s\n" print_position lexbuf msg;
+    Printf.fprintf stderr "%a:  %s\n" print_position lexbuf msg;
     None
   | Parser.Error ->
-    fprintf stderr "%a: syntax error\n" print_position lexbuf;
+    Printf.fprintf stderr "%a: syntax error\n" print_position lexbuf;
     exit (-1)
 ;;
 
@@ -450,7 +448,7 @@ let p =
 ;;
 
 open BatEnum
-let print_rules (rules: Rule.t list) = ignore (List.map rules (fun v -> Printf.printf "%s\n" (Rule.string_of_rule v)));;
+let print_rules (rules: Rule.t list) = ignore (List.map (fun v -> Printf.printf "%s\n" (Rule.string_of_rule v)) rules);;
 let keys = BatEnum.iter print_rules (IStringMap.values p);;
 
 Solver.solver_state.program <- p
