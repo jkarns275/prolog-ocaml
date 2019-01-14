@@ -88,10 +88,14 @@ module Term =
       | Nil -> ""
       | Tail tail -> (
         match tail.instance with
-        | Some(Var vt) -> Printf.sprintf "%s" (string_of_term (Var tail))
+        | Some(Var vt) -> (
+          match vt.instance with
+          | None -> Printf.sprintf "| %s" (string_of_term (Var vt))
+          | Some t -> Printf.sprintf "%s " (string_of_term_list_inner (Tail vt))
+        )
         | Some(Atom name) -> raise (ThisShouldNotHappen "Damn")
         | Some(List l) -> Printf.sprintf "%s" (string_of_term_list_inner l)
-        | None -> ""
+        | None -> Printf.sprintf "| %s" (string_of_term (Var tail))
       )
 
     and string_of_term (term: t) =
