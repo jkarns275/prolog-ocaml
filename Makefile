@@ -1,4 +1,4 @@
-OCB_FLAGS = -use-ocamlfind -use-menhir -pkg core -tag thread -I src -I lib
+OCB_FLAGS = -use-ocamlfind -package batteries -use-menhir -pkg core -tag thread -I src -I lib
 OCB = ocamlbuild $(OCB_FLAGS)
 
 clean:
