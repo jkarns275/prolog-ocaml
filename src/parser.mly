@@ -1,6 +1,12 @@
+%token <float> FLOAT
 %token <string> ATOM
 %token <string> RULE_NAME
 %token <string> VAR_NAME
+%token ADD
+%token SUB
+%token MUL
+%token DIV
+%token MOD
 %token COMMA
 %token RPAREN
 %token LPAREN
@@ -67,6 +73,8 @@ term:
     { Preast. (Atom' atom) }
   | l = term_list
     { Preast. (List' l) }
+  | e = expr
+    { Preast. (Expr' e) }
 ;
 
 rev_list_contents:
@@ -78,3 +86,28 @@ rev_list_contents:
   | it = term { [Preast. (Term' it)] }
 ;
 term_list: LBRACE; items = rev_list_contents; RBRACE { List.rev items };
+
+expr: e = add_expr { e }
+
+terminal_expr:
+  | n = FLOAT { Preast. (Number' n) }
+  | LPAREN; exp = add_expr; RPAREN { exp }
+;
+
+add_expr: e = mul_expr; tail = add_expr_tail { Preast.Addit' (e, tail) }
+add_expr_tail: it = rev_add_expr_tail { List.rev it };
+rev_add_expr_tail:
+  | { [] }
+  | t = rev_add_expr_tail; ADD; e = mul_expr { (Preast.Add, e) :: t }
+  | t = rev_add_expr_tail; SUB; e = mul_expr { (Preast.Sub, e) :: t }
+;
+
+mul_expr: e = terminal_expr; tail = mul_expr_tail { Preast.Mult' (e, tail) }
+mul_expr_tail: it = rev_mul_expr_tail { List.rev it };
+rev_mul_expr_tail:
+  | { [] }
+  | t = rev_mul_expr_tail; MUL; e = terminal_expr { (Preast.Mul, e) :: t }
+  | t = rev_mul_expr_tail; DIV; e = terminal_expr { (Preast.Div, e) :: t }
+  | t = rev_mul_expr_tail; MOD; e = terminal_expr { (Preast.Mod, e) :: t }
+;
+

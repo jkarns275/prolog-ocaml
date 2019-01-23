@@ -1,6 +1,16 @@
 open Interner
 
+type mul_op = Mul | Div | Mod
+type add_op = Add | Sub
+
+type expr =
+  | Number' of float
+  | Addit' of expr * (add_op * expr) list
+  | Mult' of expr * (mul_op * expr) list
+;;
+
 type term =
+  | Expr' of expr
   | Atom' of string
   | Var' of string
   | List' of list_term list
