@@ -5,6 +5,7 @@ type add_op = Add | Sub
 
 type expr =
   | Number' of float
+  | EVar' of string
   | Addit' of expr * (add_op * expr) list
   | Mult' of expr * (mul_op * expr) list
 ;;
@@ -31,6 +32,7 @@ let string_of_term t =
   | Atom' s -> s
   | Var' s -> s
   | List' s -> "fill me in later"
+  | Expr' _ -> "expr..."
 ;;
 
 let rec string_of_term_list ts =

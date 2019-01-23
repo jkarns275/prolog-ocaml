@@ -91,6 +91,8 @@ expr: e = add_expr { e }
 
 terminal_expr:
   | n = FLOAT { Preast. (Number' n) }
+  | v = VAR_NAME
+    { Preast. (EVar' v) }
   | LPAREN; exp = add_expr; RPAREN { exp }
 ;
 

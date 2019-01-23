@@ -63,6 +63,8 @@ module Term =
       let vt = make_var_internal name instance in
       Var vt
 
+    let make_number n = { trace = [n]; value = n; }
+
     let rec copy_term_list tl =
       match tl with
       | TList (term, tail) -> TList (copy term, copy_term_list tail)
@@ -379,16 +381,44 @@ module Ast =
   let rec term_list_from_preast (t: Preast.list_term list): Term.term_list =
     match t with
     | [] -> Nil
-    | (Tail' s) :: t -> Tail (Term.make_var_internal (intern s) None)
+    | (Tail' s) :: t -> Tail (intern s |> get_var)
     | (Term' h) :: t -> TList (term_from_preast h, term_list_from_preast t)
     | Nil' :: t -> Nil
+  and expr_from_mult (e: Preast.expr) (tail: (mul_op * expr) list) =
+    match tail with
+    | [] -> expr_from_preast_expr e
+    | (o, expr) :: tail ->
+      let op =
+        match o with
+        | Mul -> Term. Mul
+        | Div -> Term. Div
+        | Mod -> Term. Mod
+      in
+      Term. Expr ((expr_from_preast_expr e), op, (expr_from_mult expr tail))
+  and expr_from_addit (e: Preast.expr) (tail: (add_op * expr) list) =
+    match tail with
+    | [] -> expr_from_preast_expr e
+    | (o, expr) :: tail ->
+      let op = (
+        match o with
+        | Sub -> Term. Sub
+        | Add -> Term. Add
+      ) in
+      Term. Expr ((expr_from_preast_expr e), op, (expr_from_addit expr tail))
+  and expr_from_preast_expr (e: Preast.expr): Term.t =
+    match e with
+    | Number' n -> Term. Number (Term.make_number n)
+    | Addit' (e, tail) -> expr_from_addit e tail
+    | Mult' (e, tail) -> expr_from_mult e tail
+    | EVar' name -> Term. Var (get_var (intern name))
   and term_from_preast (t: Preast.term): Term.t =
     match t with
     | Atom' str -> Atom (intern str)
-    | Var' str -> Term.make_var (intern str) None
+    | Var' str -> Term. Var (get_var (intern str))
     | List' l ->
       let terms = term_list_from_preast l in
       List terms
+    | Expr' e -> expr_from_preast_expr e
 
   let clause_from_preast ((name, args): Preast.goal) = Goal. { name = Interner.intern name; args = List.map term_from_preast args }
 
@@ -558,8 +588,9 @@ Solver.solver_state.program <- p
 
 let q: Goal.clause_t =
   Goal. {
-    name = Interner.intern "zzyzz";
-    args = [List (TList (Term.make_var (Interner.intern "@z") None, TList (Term.make_var (Interner.intern "@x") None, Tail (Term.make_var_internal (Interner.intern "@T") None))))];
+    name = Interner.intern "len_impl";
+    args = [List (TList (Term.make_var (Interner.intern "@z") None, TList (Term.make_var (Interner.intern "@x") None, Nil))); Number (Term. make_number 0.0)];
+
   } ;;
 Printf.printf "\nQuery: %s\nSolutions:\n" (Goal.string_of_clause q);;
 Solver.solve (Clause q)
