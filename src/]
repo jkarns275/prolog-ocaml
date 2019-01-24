@@ -168,7 +168,6 @@ module Term =
       | Number n -> Some n.value
       | Expr e -> eval_expr e
       | _ -> None
-
     and eval_expr ((lhs, op, rhs): expr_t) =
       match eval_term lhs, eval_term rhs with
       | Some n0, Some n1 -> Some (
@@ -180,25 +179,14 @@ module Term =
         | Mod -> mod_float n0 n1
       )
       | _ -> None
+
     let rec unify_lists (l0: term_list) (l1: term_list) =
       match l0, l1 with
-      | TList _, Tail _ -> unify_lists l1 l0
-      | Tail t0, TList _ -> (
-        match t0.instance with
-        | Some x -> (
-          Printf.printf "Hmm %s\n" (string_of_term x);
-          unify_lists_inner l0 l1
-        )
-        | None -> Printf.printf "AA\n"; false
-      )
-      | _ -> unify_lists_inner l0 l1
-    and unify_lists_inner (l0: term_list) (l1: term_list) =
-      match l0, l1 with
       | TList (t0, tail0), TList (t1, tail1) ->
-        if unify t0 t1 then unify_lists_inner tail0 tail1 else false
-      | Nil, Tail t -> unify_lists_inner l1 l0
+        if unify t0 t1 then unify_lists tail0 tail1 else false
+      | Nil, Tail t -> unify_lists l1 l0
       | Tail t, Nil -> true
-      | TList (t0, tail), Tail t1 -> unify_lists_inner l1 l0
+      | TList (t0, tail), Tail t1 -> unify_lists l1 l0
       | Tail t0, TList (t1, tail) -> (
         match t0.instance with
         | Some t -> unify t (List tail)
