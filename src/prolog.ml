@@ -31,6 +31,12 @@ module Term =
       | Number of num_t
       | Expr of expr_t
 
+    let rec tailed tl =
+      match tl with
+      | TList (term, tail) -> tailed tail
+      | Nil -> false
+      | Tail _ -> true
+
     let rec map_term_list f tl =
       match tl with
       | TList (term, tail) -> (f term) :: map_term_list f tail
@@ -84,6 +90,29 @@ module Term =
       | Number n -> Number { trace = n.trace; value = n.value; }
       | Expr (lhs, op, rhs) -> Expr (copy lhs, op, copy rhs)
 
+    let rec eval_term term =
+      match term with
+      | Number n -> Some n.value
+      | Expr e -> eval_expr e
+      | Var v -> (
+        match v.instance with
+        | None -> None
+        | Some t -> eval_term t
+      )
+      | _ -> None
+
+    and eval_expr ((lhs, op, rhs): expr_t) =
+      match eval_term lhs, eval_term rhs with
+      | Some n0, Some n1 -> Some (
+        match op with
+        | Add -> n0 +. n1
+        | Sub -> n0 -. n1
+        | Mul -> n0 *. n1
+        | Div -> n0 /. n1
+        | Mod -> mod_float n0 n1
+      )
+      | _ -> None
+
     exception ThisShouldNotHappen of string
 
     let rec reset (term: t) =
@@ -113,29 +142,33 @@ module Term =
     and string_of_term_list_inner (tl: term_list) =
       match tl with
       | TList (term, tail) -> Printf.sprintf "%s, %s" (string_of_term term) (string_of_term_list_inner tail)
-      | Nil -> ""
+      | Nil -> "<nil>"
       | Tail tail -> (
         match tail.instance with
         | Some(Var vt) -> (
           match vt.instance with
           | None -> Printf.sprintf "| %s" (string_of_term (Var vt))
-          | Some t -> Printf.sprintf "%s " (string_of_term_list_inner (Tail vt))
+          | Some t -> Printf.sprintf " %s " (string_of_term_list_inner (Tail vt))
         )
         | Some(Atom name) -> raise (ThisShouldNotHappen "This should not happen")
         | Some(List l) -> Printf.sprintf "%s" (string_of_term_list_inner l)
-        | Some(e) -> string_of_term e
-        | None -> Printf.sprintf "| %s" (string_of_term (Var tail))
+        | Some(e) -> Printf.sprintf "%s" (string_of_term e)
+        | None -> Printf.sprintf "%s" (string_of_term (Var tail))
       )
 
     and string_of_term (term: t) =
       match term with
       | List l -> string_of_term_list l
-      | Atom name -> Interner.get_string name
+      | Atom name -> Printf.sprintf ":%s" (Interner.get_string name)
       | Number n -> Printf.sprintf "%f" n.value
-      | Expr (lhs, op, rhs) -> Printf.sprintf "%s %s %s" (string_of_term lhs) (string_of_ari_op op) (string_of_term rhs)
+      | Expr (lhs, op, rhs) -> (
+        match eval_expr (lhs, op, rhs) with
+        | None -> Printf.sprintf "%s %s %s" (string_of_term lhs) (string_of_ari_op op) (string_of_term rhs)
+        | Some n -> Printf.sprintf "%f" n
+      )
       | Var vt -> (
         match vt.instance with
-        | Some x -> string_of_term x
+        | Some x -> Printf.sprintf "%s" (string_of_term x)
         | None -> Printf.sprintf "%d%s" vt.varno (Interner.get_string vt.name)
       )
 
@@ -163,45 +196,29 @@ module Term =
             | _ -> () (* This will never happen *)
       end
 
-    let rec eval_term term =
-      match term with
-      | Number n -> Some n.value
-      | Expr e -> eval_expr e
-      | _ -> None
-
-    and eval_expr ((lhs, op, rhs): expr_t) =
-      match eval_term lhs, eval_term rhs with
-      | Some n0, Some n1 -> Some (
-        match op with
-        | Add -> n0 +. n1
-        | Sub -> n0 -. n1
-        | Mul -> n0 *. n1
-        | Div -> n0 /. n1
-        | Mod -> mod_float n0 n1
-      )
-      | _ -> None
+    (* Fix issue where [x, ] unfies with [] *)
+    (* Turns out: order matters for unification.
+       Example:
+        If the question has an empty tail as an argument which corresponds to a list on the other end that has two elements.
+        Right now the program will append the list to the end of the tail, but thats not what we want: since the tailand the argument .
+     *)
     let rec unify_lists (l0: term_list) (l1: term_list) =
       match l0, l1 with
-      | TList _, Tail _ -> unify_lists l1 l0
-      | Tail t0, TList _ -> (
-        match t0.instance with
-        | Some x -> (
-          Printf.printf "Hmm %s\n" (string_of_term x);
-          unify_lists_inner l0 l1
-        )
-        | None -> Printf.printf "AA\n"; false
-      )
-      | _ -> unify_lists_inner l0 l1
-    and unify_lists_inner (l0: term_list) (l1: term_list) =
-      match l0, l1 with
       | TList (t0, tail0), TList (t1, tail1) ->
-        if unify t0 t1 then unify_lists_inner tail0 tail1 else false
-      | Nil, Tail t -> unify_lists_inner l1 l0
-      | Tail t, Nil -> true
-      | TList (t0, tail), Tail t1 -> unify_lists_inner l1 l0
+        if unify t0 t1 then unify_lists tail0 tail1 else false
+      | Nil, Tail t -> unify_lists l1 l0
+      | Tail t, Nil -> (
+        match t.instance with
+        | Some _ -> false
+        | None ->
+          t.instance <- Some (List l1);
+          trail#push (List l0);
+          true
+      )
+      | TList (t0, tail), Tail t1 -> unify_lists l1 l0
       | Tail t0, TList (t1, tail) -> (
         match t0.instance with
-        | Some t -> unify t (List tail)
+        | Some t -> unify t (List l1)
         | None ->
           t0.instance <- Some (List l1);
           trail#push (List l0);
@@ -228,7 +245,6 @@ module Term =
       | Nil, Nil -> true
 
     and unify (t0: t) (t1: t) =
-      let junk = Printf.printf "<%s %s>\n" (string_of_term t0) (string_of_term t1) in
       match t0, t1 with
       | List l0, List l1 -> unify_lists l0 l1
       | List _, Atom _ -> false
@@ -475,7 +491,7 @@ module Solver =
         query = Goal. (Clause { name = 0; args = []; });
       }
 
-    let print_soln () = Printf.printf "%s\n" (Goal.to_string solver_state.query)
+    let print_soln () = Printf.printf "SOLUTION: %s\n" (Goal.to_string solver_state.query)
 
     let rec strip_clause_state (cl: Goal.clause_t) =
       strip_clause_state_inner cl.args (IStringMap. empty)
@@ -522,16 +538,15 @@ module Solver =
           resume_clause_state_inner tail state
         | _ -> resume_clause_state_inner tail state
 
-    let rec try_unify_rule ((cl, rule_goals): Rule.t) (goals: Rule.body) =
-      let junk = Printf.printf "%s\n" (Rule.string_of_rule (cl, rule_goals)) in
+    let rec try_unify_rule ((cl, rule_goals): Rule.t) (qgoals: Rule.body) =
       let t = Term.trail#mark in
       (*let clause_state = strip_clause_state cl in*)
-      let res = match goals with
+      let res = match qgoals with
       | [] -> false
       | g :: goals_trail -> (
         match g with
-        | Clause cl2 -> (
-          if Goal.unify cl cl2 then
+        | Clause qcl -> (
+          if Goal.unify cl qcl then
             let unified_rules =
               match rule_goals with
               | [] -> goals_trail
@@ -572,7 +587,7 @@ module Solver =
       | Clause cl :: tail ->
         try (
           let rules = IStringMap.find cl.name solver_state.program in
-          ignore (List.map (fun x -> Printf.printf ":>\n"; try_unify_rule x goals) (List.map Ast.rule_from_preast rules));
+          ignore (List.map (fun x -> try_unify_rule x goals) (List.map Ast.rule_from_preast rules));
           true
         )
         with Not_found -> false
@@ -587,7 +602,6 @@ module Solver =
 open Lexer
 open Lexing
 open Preast
-let c = List.map (fun x -> Printf.printf "%d\n" x) [1;2;3;4];;
 
 let print_position outx lexbuf =
   let pos = lexbuf.lex_curr_p in
@@ -616,7 +630,10 @@ let p =
 ;;
 
 open BatEnum
+
+
 let print_rules (rules: Rule.t list) = ignore (List.map (fun v -> Printf.printf "%s\n" (Rule.string_of_rule v)) rules);;
+Printf.printf "RULES:\n";;
 let keys = BatEnum.iter print_rules (IStringMap.values (Ast.from_preast p));;
 let create_program (p: Preast.t) =
   let tbl = Hashtbl.create (List.length p) in
@@ -630,13 +647,15 @@ let create_program (p: Preast.t) =
 ;;
 Solver.solver_state.program <- create_program p;;
 
+Printf.printf "\n\n";;
+
 let q: Goal.clause_t =
   Goal. {
-    name = Interner.intern "len_impl";
-    args = [List (TList (Term.make_atom "A", TList (Term.make_atom "x", Nil))); Number (Term. make_number 0.0)];
+    name = Interner.intern "len";
+    args = [List (TList (Term.make_atom "A", TList (Term. make_atom "x", Nil))); Term. make_var (Interner.intern "hy") None];
 
   } ;;
-Printf.printf "\nQuery: %s\nSolutions:\n" (Goal.string_of_clause q);;
+Printf.printf "\nQuery: %s\n" (Goal.string_of_clause q);;
 Solver.solve (Clause q)
 
 
