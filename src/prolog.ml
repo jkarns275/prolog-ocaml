@@ -159,7 +159,7 @@ module Term =
     and string_of_term (term: t) =
       match term with
       | List l -> string_of_term_list l
-      | Atom name -> Printf.sprintf ":%s" (Interner.get_string name)
+      | Atom name -> Printf.sprintf "%s" (Interner.get_string name)
       | Number n -> Printf.sprintf "%f" n.value
       | Expr (lhs, op, rhs) -> (
         match eval_expr (lhs, op, rhs) with
@@ -603,28 +603,45 @@ open Lexer
 open Lexing
 open Preast
 
-let print_position outx lexbuf =
-  let pos = lexbuf.lex_curr_p in
-  Printf.fprintf outx "%s:%d:%d" pos.pos_fname
-    pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
-;;
-
-let lex_buf_of_in_channel inch = Lexing.from_channel inch
-
-let parse_with_error lexbuf =
-  try Parser.prog Lexer.read lexbuf with
-  | SyntaxError msg ->
-    Printf.fprintf stderr "%a:  %s\n" print_position lexbuf msg;
-    None
-  | Parser.Error ->
-    Printf.fprintf stderr "%a: syntax error\n" print_position lexbuf;
-    exit (-1)
-;;
-
-exception ParseException of string
-
 module Cli =
   struct
+
+
+    let position_to_string filename lexbuf =
+      let pos = lexbuf.lex_curr_p in
+      Printf.sprintf "%s:%d:%d" filename pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
+
+    let make_query_parse_error filename lexbuf =
+      let pos = lexbuf.lex_curr_p in
+      Printf.sprintf "\"%s\" %d:%d" filename pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
+
+    let lex_buf_of_in_channel inch = Lexing.from_channel inch
+    let lex_buf_of_string s = Lexing.from_string s
+
+    let parse_file_with_error filename lexbuf =
+      try Some (Parser.prog Lexer.read lexbuf) with
+      | SyntaxError msg ->
+        Printf.fprintf stderr "%s:  %s\n" (position_to_string filename lexbuf) msg;
+        None
+      | Parser.Error ->
+        Printf.fprintf stderr "%s: syntax error\n" (position_to_string filename lexbuf);
+        exit (-1)
+
+    let parse_query_with_error filename lexbuf =
+      try Some (Parser.goal Lexer.read lexbuf) with
+      | SyntaxError msg ->
+        Printf.printf "%s:  %s\n" (make_query_parse_error filename lexbuf) msg;
+        None
+      | Parser.Error ->
+        Printf.printf "%s: syntax error\n" (make_query_parse_error filename lexbuf);
+        None
+
+    let test  lb =
+      try ignore (Parser.goal Lexer.read lb) with
+      | SyntaxError msg -> ()
+      | _ -> ()
+
+    exception ParseException of string
 
     type pre_program = (IString.t, Preast.rule) Hashtbl.t
 
@@ -642,10 +659,11 @@ module Cli =
       List.fold_left (fun acc k -> IStringMap.add k (Hashtbl.find_all p k) acc) IStringMap.empty keys
 
     let parse_file path =
-      match parse_with_error (lex_buf_of_in_channel BatFile. (open_in path)) with
+      match parse_file_with_error path (lex_buf_of_in_channel BatFile. (open_in path)) with
       | Some x -> x
       | None -> raise (ParseException "Failed to parse.")
 
+    (* ignore the first argument, because it is the program's file not the first user supplied argument *)
     let rec read_input_files () =
        match Array.to_list Sys.argv with
        | _head :: input_files -> read_input_files_inner input_files
@@ -657,14 +675,25 @@ module Cli =
 
     exception Break of int
 
+    let handle_query (s: string) =
+      try (
+        match parse_query_with_error s (lex_buf_of_string s) with
+        | Some x -> (
+          ignore (Solver.solve (Clause (Ast.clause_from_preast x)))
+        )
+        | None -> ()
+      ) with _ -> ()
+
     let interactive (program: Solver.program) =
+      Solver.solver_state.program <- program;
       try
         while true do
+          Printf.printf ":? ";
           let line = read_line() in
           match line with
           | "exit" -> raise (Break 0)
           | "quit" -> raise (Break 0)
-          | _ -> Printf.printf "%s\n" line
+          | s -> handle_query s
         done
       with
         | End_of_file -> ()
@@ -677,11 +706,6 @@ module Cli =
       | x -> interactive (read_input_files ())
 
   end
-
-let p =
-  match parse_with_error (lex_buf_of_in_channel BatFile. (open_in "tests/simple.pl")) with
-  | Some x -> x
-  | None -> raise (ParseException "Failed to parse.")
 ;;
 
 Cli.run ()

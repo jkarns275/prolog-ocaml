@@ -17,11 +17,12 @@
 %token PIPE
 %token EOR
 %token EOF
-%start <Preast.t option> prog
+%start <Preast.goal> goal
+%start <Preast.t> prog
 %%
 
 prog:
-  | v = rules { Some v }
+  | v = rules { v }
 ;
 
 rules: revrules = rev_rules; EOF { List.rev revrules };
