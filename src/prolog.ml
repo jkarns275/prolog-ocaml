@@ -623,15 +623,71 @@ let parse_with_error lexbuf =
 
 exception ParseException of string
 
+module Cli =
+  struct
+
+    type pre_program = (IString.t, Preast.rule) Hashtbl.t
+
+    let make_empty_pre_program (): pre_program = Hashtbl.create 16
+    let add_to_pre_program (parsed: Preast.t) (p: pre_program): pre_program =
+      let add_rule (r: Preast.rule) =
+        let (name, _args), _goals = r in
+        Hashtbl.add p (Interner.intern name) r
+      in
+      ignore (List.map add_rule parsed);
+      p
+
+    let program_of_pre_program (p: pre_program): Solver.program =
+      let keys = List.map (fun (k, v) -> k) (Hashtbl.to_list p) in
+      List.fold_left (fun acc k -> IStringMap.add k (Hashtbl.find_all p k) acc) IStringMap.empty keys
+
+    let parse_file path =
+      match parse_with_error (lex_buf_of_in_channel BatFile. (open_in path)) with
+      | Some x -> x
+      | None -> raise (ParseException "Failed to parse.")
+
+    let rec read_input_files () =
+       match Array.to_list Sys.argv with
+       | _head :: input_files -> read_input_files_inner input_files
+       | [] -> program_of_pre_program (make_empty_pre_program ())
+    and read_input_files_inner (input_files: string list) =
+      let prog = make_empty_pre_program () in
+      ignore (List.map (fun file -> add_to_pre_program (parse_file file) prog) input_files);
+      program_of_pre_program prog
+
+    exception Break of int
+
+    let interactive (program: Solver.program) =
+      try
+        while true do
+          let line = read_line() in
+          match line with
+          | "exit" -> raise (Break 0)
+          | "quit" -> raise (Break 0)
+          | _ -> Printf.printf "%s\n" line
+        done
+      with
+        | End_of_file -> ()
+        | Break _ -> ()
+
+    let run () =
+      match Array.length Sys.argv with
+      | 0 -> () (* Not possible? *)
+      | 1 -> Printf.printf "Please supply at least one input file.\n" (* No input supplied *)
+      | x -> interactive (read_input_files ())
+
+  end
+
 let p =
   match parse_with_error (lex_buf_of_in_channel BatFile. (open_in "tests/simple.pl")) with
   | Some x -> x
   | None -> raise (ParseException "Failed to parse.")
 ;;
 
+Cli.run ()
+
+(*
 open BatEnum
-
-
 let print_rules (rules: Rule.t list) = ignore (List.map (fun v -> Printf.printf "%s\n" (Rule.string_of_rule v)) rules);;
 Printf.printf "RULES:\n";;
 let keys = BatEnum.iter print_rules (IStringMap.values (Ast.from_preast p));;
@@ -645,6 +701,7 @@ let create_program (p: Preast.t) =
   List.fold_left (fun acc k -> IStringMap.add k (Hashtbl.find_all tbl k) acc) IStringMap.empty
     (List.map (fun (k, v) -> k) (Hashtbl.to_list tbl))
 ;;
+
 Solver.solver_state.program <- create_program p;;
 
 Printf.printf "\n\n";;
@@ -657,5 +714,5 @@ let q: Goal.clause_t =
   } ;;
 Printf.printf "\nQuery: %s\n" (Goal.string_of_clause q);;
 Solver.solve (Clause q)
-
+*)
 
