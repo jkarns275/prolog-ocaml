@@ -17,12 +17,12 @@
 %token PIPE
 %token EOR
 %token EOF
-%start <Preast.goal list> goal_list
-%start <Preast.t> prog
+%token IS
+%start <Preast.t option> prog
 %%
 
 prog:
-  | v = rules { v }
+  | v = rules { Some v }
 ;
 
 rules: revrules = rev_rules; EOF { List.rev revrules };
@@ -33,7 +33,7 @@ rev_rules:
     { r :: tail }
 ;
 
-goal:
+clause:
   | name = RULE_NAME; LPAREN; args = clause_args; RPAREN
     { name, args }
   | name = RULE_NAME
@@ -48,12 +48,14 @@ rev_goal_list:
     { cl :: tail }
   | cl = goal
     { [cl] }
-;
+  ;
+
+goal: () = IS { () } ;
 
 rule:
-  | g = goal
+  | g = clause
     { g, [] }
-  | g = goal; IMPLIES; goals = goal_list
+  | g = clause; IMPLIES; goals = goal_list
     { g, goals }
 ;
 
@@ -113,4 +115,3 @@ rev_mul_expr_tail:
   | t = rev_mul_expr_tail; DIV; e = terminal_expr { (Preast.Div, e) :: t }
   | t = rev_mul_expr_tail; MOD; e = terminal_expr { (Preast.Mod, e) :: t }
 ;
-

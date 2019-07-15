@@ -481,17 +481,19 @@ module Solver =
       {
         mutable program: program;
         mutable found_match: bool;
-        mutable query: Goal.t;
+        mutable queries: Goal.t list;
       }
 
     let solver_state =
       {
         program = IStringMap.empty;
         found_match = false;
-        query = Goal. (Clause { name = 0; args = []; });
+        queries = [Goal. (Clause { name = 0; args = []; })];
       }
 
-    let print_soln () = Printf.printf "SOLUTION: %s\n" (Goal.to_string solver_state.query)
+    let print_soln () =
+      let str = (List.fold_left (fun acc g -> Printf.sprintf "%s    %s,\n" acc (Goal.to_string g)) "" solver_state.queries) in
+      Printf.printf "SOLUTION:\n%s" str
 
     let rec strip_clause_state (cl: Goal.clause_t) =
       strip_clause_state_inner cl.args (IStringMap. empty)
@@ -593,8 +595,12 @@ module Solver =
         with Not_found -> false
 
     let solve (g: Goal.t) =
-      solver_state.query <- g;
+      solver_state.queries <- [g];
       solve_inner [g]
+
+    let solve_all (g: Goal.t list) =
+      solver_state.queries <- g;
+      solve_inner g
 
     let add_rule (name: IString.t) (rules: Preast.rule list) = solver_state.program <- IStringMap. (add name rules solver_state.program)
   end
@@ -628,7 +634,7 @@ module Cli =
         exit (-1)
 
     let parse_query_with_error filename lexbuf =
-      try Some (Parser.goal Lexer.read lexbuf) with
+      try Some (Parser.goal_list Lexer.read lexbuf) with
       | SyntaxError msg ->
         Printf.printf "%s:  %s\n" (make_query_parse_error filename lexbuf) msg;
         None
@@ -637,7 +643,7 @@ module Cli =
         None
 
     let test  lb =
-      try ignore (Parser.goal Lexer.read lb) with
+      try ignore (Parser.goal_list Lexer.read lb) with
       | SyntaxError msg -> ()
       | _ -> ()
 
@@ -678,9 +684,8 @@ module Cli =
     let handle_query (s: string) =
       try (
         match parse_query_with_error s (lex_buf_of_string s) with
-        | Some x -> (
-          ignore (Solver.solve (Clause (Ast.clause_from_preast x)))
-        )
+        | Some x ->
+          ignore (Solver.solve_all (List.map (fun y -> Ast.clause_from_preast y) x))
         | None -> ()
       ) with _ -> ()
 
