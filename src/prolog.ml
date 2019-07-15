@@ -633,17 +633,17 @@ module Cli =
         Printf.fprintf stderr "%s: syntax error\n" (position_to_string filename lexbuf);
         exit (-1)
 
-    let parse_query_with_error filename lexbuf =
-      try Some (Parser.goal_list Lexer.read lexbuf) with
+    let parse_query_with_error query_str lexbuf =
+      try Some (Parser.query Lexer.read lexbuf) with
       | SyntaxError msg ->
-        Printf.printf "%s:  %s\n" (make_query_parse_error filename lexbuf) msg;
+        Printf.printf "%s:  %s\n" (make_query_parse_error query_str lexbuf) msg;
         None
       | Parser.Error ->
-        Printf.printf "%s: syntax error\n" (make_query_parse_error filename lexbuf);
+        Printf.printf "%s: syntax error\n" (make_query_parse_error query_str lexbuf);
         None
 
     let test  lb =
-      try ignore (Parser.goal_list Lexer.read lb) with
+      try ignore (Parser.query Lexer.read lb) with
       | SyntaxError msg -> ()
       | _ -> ()
 
@@ -681,11 +681,12 @@ module Cli =
 
     exception Break of int
 
-    let handle_query (s: string) =
+    let handle_query (qs: string) =
       try (
-        match parse_query_with_error s (lex_buf_of_string s) with
+        let s = (qs ^ " .") in
+        match parse_query_with_error qs (lex_buf_of_string s) with
         | Some x ->
-          ignore (Solver.solve_all (List.map (fun y -> Ast.clause_from_preast y) x))
+          ignore (Solver.solve_all (List.map (fun y -> Goal.Clause (Ast.clause_from_preast y)) x))
         | None -> ()
       ) with _ -> ()
 

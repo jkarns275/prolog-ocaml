@@ -17,13 +17,17 @@
 %token PIPE
 %token EOR
 %token EOF
-%start <Preast.goal list> goal_list
+%start <Preast.goal list> query
 %start <Preast.t> prog
 %%
 
 prog:
   | v = rules { v }
 ;
+
+query:
+  | q = goal_list; EOR
+    { q }
 
 rules: revrules = rev_rules; EOF { List.rev revrules };
 
@@ -37,7 +41,7 @@ goal:
   | name = RULE_NAME; LPAREN; args = clause_args; RPAREN
     { name, args }
   | name = RULE_NAME
-             { name, [] }
+    { name, [] }
 ;
 
 goal_list: rev_goals = rev_goal_list { List.rev rev_goals };
