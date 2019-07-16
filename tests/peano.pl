@@ -24,3 +24,12 @@ display(@x, @y) :- to_number(@x, @z), mov(@z, @y).
 to_number(@x, @z) :- to_number_(@x, 0, @z).
 to_number_([], @x, @x).
 to_number_([@x | @xtail], @y, @z) :- to_number_(@x, 1 + @y, @z).
+
+lt([], [@x | @xtail]).
+lt([@x | @xt], [@y | @yt]) :- lt(@x, @y).
+
+sqrt([], []).
+sqrt([[]], [[]]).
+sqrt(@x, @o) :- sqrt_(@x, [[]], @o).
+sqrt_(@x, @y, @o) :- mul(@y, @y, @z), eq(@z, @x), mov(@y, @o).
+sqrt_(@x, @y, @o) :- mul(@y, @y, @z), lt(@y, @x), sqrt_(@x, [@y], @o).
